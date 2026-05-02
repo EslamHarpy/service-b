@@ -4,6 +4,13 @@ pipeline{
         maven 'maven-3.9.15'
         jdk 'jdk-17'
     }
+    environment {
+        AWS_ACCOUNT_ID = '053274260339' 
+        AWS_DEFAULT_REGION = 'us-east-1' 
+        IMAGE_REPO_NAME = 'my-spring-petclinic' 
+        IMAGE_TAG = "${env.BUILD_NUMBER}"
+        REPOSITORY_URI = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/${IMAGE_REPO_NAME}"
+    }
     stages{
         stage('first stage '){
             steps{
@@ -17,7 +24,7 @@ pipeline{
         stage('clone'){
             steps{
                 git branch : 'main',
-                url: 'https://github.com/spring-projects/spring-petclinic.git'
+                url: 'https://github.com/EslamHarpy/spring-petclinic.git'
             }
         }
         stage('change config'){
@@ -40,9 +47,33 @@ pipeline{
                 sh 'mvn package'
             }
         }
-        stage('run'){
-            steps{
-                sh 'nohup java -jar target/*.jar --server.port=8081 > app.log 2>&1 & sleep 300'
+        stage('Docker Build & Tag') {
+            steps {
+                script {
+                    sh "docker build -t ${REPOSITORY_URI}:${IMAGE_TAG} ."
+                    sh "docker tag ${REPOSITORY_URI}:${IMAGE_TAG} ${REPOSITORY_URI}:latest"
+                }
+            }
+        }
+        stage('Push to AWS ECR') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'aws-credentials-id', 
+                                                 passwordVariable: 'AWS_SECRET_ACCESS_KEY', 
+                                                 usernameVariable: 'AWS_ACCESS_KEY_ID')]) {
+                    sh """
+                    aws ecr get-login-password --region ${AWS_DEFAULT_REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com
+                    docker push ${REPOSITORY_URI}:${IMAGE_TAG}
+                    docker push ${REPOSITORY_URI}:latest
+                    """
+                }
+            }
+        }
+        stage('Run Container') {
+            steps {
+                script {
+                    sh "docker rm -f petclinic-app || true"
+                    sh "docker run -d -p 8081:8081 --name petclinic-app ${REPOSITORY_URI}:latest"
+                }
             }
         }
     }   
